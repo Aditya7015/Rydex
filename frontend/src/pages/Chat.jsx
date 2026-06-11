@@ -23,7 +23,7 @@ export default function Chat() {
 
   useEffect(() => {
     // Initialize socket connection
-    socketRef.current = io(import.meta.env.VITE_API_URL || 'http://localhost:5000');
+    socketRef.current = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000');
     
     socketRef.current.on('connect', () => {
       socketRef.current.emit('register', user?.id);
@@ -31,7 +31,7 @@ export default function Chat() {
     });
     
     socketRef.current.on('new-message', (data) => {
-      if (data.senderId === userId || data.senderId === user?.id) {
+      if (data.rideId === rideId) {
         setMessages(prev => [...prev, {
           text: data.message,
           senderId: data.senderId,
@@ -60,15 +60,16 @@ export default function Chat() {
   const fetchChatData = async () => {
     try {
       setLoading(true);
-      const [chatRes, rideRes, userRes] = await Promise.all([
+      const [chatRes, rideRes] = await Promise.all([
         axios.get(`/chat/${rideId}/${userId}`),
-        axios.get(`/rides/${rideId}`),
-        axios.get(`/auth/user/${userId}`)
+        axios.get(`/rides/${rideId}`)
       ]);
       
-      setMessages(chatRes.data.messages || []);
+      const chat = chatRes.data.chat;
+      setMessages(chat?.messages || []);
       setRide(rideRes.data.ride);
-      setOtherUser(userRes.data.user);
+      const other = chat.driverId?._id?.toString() === user?.id ? chat.passengerId : chat.driverId;
+      setOtherUser(other);
     } catch (error) {
       toast.error('Failed to load chat');
       navigate(-1);

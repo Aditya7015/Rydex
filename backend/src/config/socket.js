@@ -1,4 +1,5 @@
 const Chat = require('../models/Chat');
+const Ride = require('../models/Ride');
 
 const users = new Map(); // userId -> socketId
 
@@ -28,17 +29,37 @@ const setupSocket = (io) => {
         if (!chat) {
           chat = await Chat.findOne({ rideId, driverId: receiverId, passengerId: senderId });
         }
-        
-        if (chat) {
-          chat.messages.push({
-            senderId,
-            text: message,
-            timestamp: new Date(),
-            read: false
+
+        if (!chat) {
+          const ride = await Ride.findById(rideId);
+          if (!ride) {
+            throw new Error('Ride not found');
+          }
+
+          const rideDriverId = ride.driverId.toString();
+          if (rideDriverId !== senderId && rideDriverId !== receiverId) {
+            throw new Error('Sender or receiver must be the ride driver');
+          }
+
+          const driverId = rideDriverId === senderId ? senderId : receiverId;
+          const passengerId = driverId === senderId ? receiverId : senderId;
+
+          chat = await Chat.create({
+            rideId,
+            driverId,
+            passengerId,
+            messages: []
           });
-          chat.lastMessageAt = new Date();
-          await chat.save();
         }
+        
+        chat.messages.push({
+          senderId,
+          text: message,
+          timestamp: new Date(),
+          read: false
+        });
+        chat.lastMessageAt = new Date();
+        await chat.save();
         
         // Emit to receiver if online
         const receiverSocketId = users.get(receiverId);

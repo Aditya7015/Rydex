@@ -15,6 +15,7 @@ import MyRides from './pages/MyRides';
 import MyBookings from './pages/MyBookings';
 import Profile from './pages/Profile';
 import Chat from './pages/Chat';
+import Footer from './components/Footer';
 
 function App() {
   return (
@@ -67,9 +68,12 @@ function App() {
             {/* 404 Page - Catch all unmatched routes */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+
+          <Footer />
         </div>
       </AuthProvider>
     </Router>
+    
   );
 }
 
