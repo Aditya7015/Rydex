@@ -134,6 +134,70 @@ const respondToBooking = async (req, res) => {
   }
 };
 
+// @desc    Driver responds to a passenger booking by ride and passenger IDs
+// @route   PUT /api/bookings/respond-by-passenger/:rideId/:passengerId
+const respondToBookingByPassenger = async (req, res) => {
+  try {
+    const { rideId, passengerId } = req.params;
+    const { action } = req.body;
+
+    const booking = await Booking.findOne({ rideId, passengerId });
+
+    if (!booking) {
+      return res.status(404).json({ success: false, error: 'Booking not found' });
+    }
+
+    const ride = await Ride.findById(booking.rideId);
+
+    if (!ride) {
+      return res.status(404).json({ success: false, error: 'Ride not found' });
+    }
+
+    if (ride.driverId.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Not authorized' });
+    }
+
+    if (action === 'accept') {
+      booking.status = 'confirmed';
+      await booking.save();
+
+      const passengerRequest = ride.bookedPassengers.find(
+        p => p.passengerId.toString() === booking.passengerId.toString()
+      );
+      if (passengerRequest) {
+        passengerRequest.status = 'accepted';
+        passengerRequest.acceptedAt = new Date();
+      }
+
+      if (ride.availableSeatsCount === 0) {
+        ride.status = 'full';
+      }
+
+      await ride.save();
+      await User.findByIdAndUpdate(booking.passengerId, {
+        $inc: { totalRidesAsPassenger: 1 }
+      });
+    } else if (action === 'reject') {
+      booking.status = 'cancelled';
+      booking.cancelledBy = 'driver';
+      booking.cancelledAt = new Date();
+      await booking.save();
+
+      const passengerRequest = ride.bookedPassengers.find(
+        p => p.passengerId.toString() === booking.passengerId.toString()
+      );
+      if (passengerRequest) {
+        passengerRequest.status = 'rejected';
+      }
+      await ride.save();
+    }
+
+    res.status(200).json({ success: true, booking });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 // @desc    Cancel booking (by passenger)
 // @route   DELETE /api/bookings/:bookingId
 const cancelBooking = async (req, res) => {
@@ -262,6 +326,7 @@ const rateRide = async (req, res) => {
 module.exports = {
   requestBooking,
   respondToBooking,
+  respondToBookingByPassenger,
   cancelBooking,
   getMyBookings,
   getDriverBookings,

@@ -10,6 +10,35 @@ export default function MyRides() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('upcoming');
 
+  const getRideDateTime = (ride) => {
+    const rideDate = new Date(ride.date);
+
+    if (Number.isNaN(rideDate.getTime())) {
+      return null;
+    }
+
+    if (ride.departureTime) {
+      const [hours, minutes] = ride.departureTime.split(':').map(Number);
+      if (!Number.isNaN(hours) && !Number.isNaN(minutes)) {
+        rideDate.setHours(hours, minutes, 0, 0);
+      }
+    }
+
+    return rideDate;
+  };
+
+  const getAvailableSeats = (ride) => {
+    if (typeof ride.availableSeatsCount === 'number') {
+      return ride.availableSeatsCount;
+    }
+
+    const bookedSeats = ride.bookedPassengers
+      ?.filter((passenger) => passenger.status === 'accepted')
+      .reduce((total, passenger) => total + (passenger.seats || 0), 0) || 0;
+
+    return ride.seatsAvailable - bookedSeats;
+  };
+
   useEffect(() => {
     fetchRides();
   }, []);
@@ -18,7 +47,7 @@ export default function MyRides() {
     try {
       setLoading(true);
       const { data } = await axios.get('/rides/driver/me');
-      setRides(data.rides);
+      setRides(data.rides || []);
     } catch (error) {
       toast.error('Failed to load rides');
     } finally {
@@ -38,9 +67,9 @@ export default function MyRides() {
     }
   };
 
-  const handleRespondToBooking = async (bookingId, action, rideId) => {
+  const handleRespondToBooking = async (rideId, passengerId, action) => {
     try {
-      await axios.put(`/bookings/respond/${bookingId}`, { action });
+      await axios.put(`/bookings/respond-by-passenger/${rideId}/${passengerId}`, { action });
       toast.success(`Booking ${action}ed`);
       fetchRides();
     } catch (error) {
@@ -49,8 +78,12 @@ export default function MyRides() {
   };
 
   const filteredRides = rides.filter(ride => {
-    if (activeTab === 'upcoming') return ride.date >= new Date() && ride.status !== 'cancelled';
-    if (activeTab === 'past') return ride.date < new Date() || ride.status === 'completed';
+    const rideDateTime = getRideDateTime(ride);
+    const now = new Date();
+
+    if (!rideDateTime) return false;
+    if (activeTab === 'upcoming') return rideDateTime >= now && !['cancelled', 'completed'].includes(ride.status);
+    if (activeTab === 'past') return rideDateTime < now || ride.status === 'completed';
     if (activeTab === 'cancelled') return ride.status === 'cancelled';
     return true;
   });
@@ -128,7 +161,7 @@ export default function MyRides() {
                       ₹{ride.pricePerSeat}/seat
                     </div>
                     <div className="text-sm text-gray-600">
-                      {ride.availableSeatsCount} seats left
+                      {getAvailableSeats(ride)} seats left
                     </div>
                   </div>
                 </div>
@@ -139,7 +172,7 @@ export default function MyRides() {
                     <h4 className="font-medium mb-3">Booking Requests</h4>
                     <div className="space-y-3">
                       {ride.bookedPassengers
-                        .filter(p => p.status !== 'accepted')
+                        .filter(p => p.status === 'pending')
                         .map((passenger) => (
                           <div key={passenger._id} className="flex justify-between items-center bg-gray-50 p-3 rounded">
                             <div>
@@ -150,13 +183,13 @@ export default function MyRides() {
                             </div>
                             <div className="flex gap-2">
                               <button
-                                onClick={() => handleRespondToBooking(ride.bookedPassengers.find(b => b._id === passenger._id)?._id, 'accept', ride._id)}
+                                onClick={() => handleRespondToBooking(ride._id, passenger.passengerId?._id, 'accept')}
                                 className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-1"
                               >
                                 <CheckIcon className="w-4 h-4" /> Accept
                               </button>
                               <button
-                                onClick={() => handleRespondToBooking(ride.bookedPassengers.find(b => b._id === passenger._id)?._id, 'reject', ride._id)}
+                                onClick={() => handleRespondToBooking(ride._id, passenger.passengerId?._id, 'reject')}
                                 className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 flex items-center gap-1"
                               >
                                 <XMarkIcon className="w-4 h-4" /> Reject
