@@ -23,6 +23,17 @@ const errorHandler = (err, req, res, next) => {
     error = { message, statusCode: 400 };
   }
 
+  // Multer upload errors
+  if (err.name === 'MulterError') {
+    let message = err.message;
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      message = 'Photo must be 10MB or smaller';
+    } else if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+      message = 'Only image files are allowed for profile photos';
+    }
+    error = { message, statusCode: 400 };
+  }
+
   res.status(error.statusCode || 500).json({
     success: false,
     error: error.message || 'Server Error'

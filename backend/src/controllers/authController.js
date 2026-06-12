@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const cloudinary = require('../config/cloudinary');
 const { sendOTP, verifyOTP } = require('../utils/sendSMS');
 
 // Generate JWT Token
@@ -151,12 +152,13 @@ const getMe = async (req, res) => {
 // @route   PUT /api/auth/update-profile
 const updateProfile = async (req, res) => {
   try {
-    const { name, email, preferences } = req.body;
+    const { name, email, preferences, profilePhoto } = req.body;
     
     const user = await User.findById(req.user.id);
     
     if (name) user.name = name;
     if (email) user.email = email;
+    if (profilePhoto) user.profilePhoto = profilePhoto;
     if (preferences) user.preferences = { ...user.preferences, ...preferences };
     
     await user.save();
@@ -178,10 +180,45 @@ const updateProfile = async (req, res) => {
   }
 };
 
+// @desc    Upload profile photo
+// @route   POST /api/auth/upload-photo
+const uploadProfilePhoto = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No photo file provided' });
+    }
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'rydex/profile_photos',
+          resource_type: 'image',
+          transformation: [{ width: 500, height: 500, crop: 'limit', quality: 'auto' }]
+        },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      );
+
+      stream.end(req.file.buffer);
+    });
+
+    const user = await User.findById(req.user.id);
+    user.profilePhoto = uploadResult.secure_url;
+    await user.save();
+
+    res.status(200).json({ success: true, url: user.profilePhoto });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 module.exports = {
   sendPhoneOTP,
   verifyOTPAndRegister,
   login,
   getMe,
-  updateProfile
+  updateProfile,
+  uploadProfilePhoto
 };
