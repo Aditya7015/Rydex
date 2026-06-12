@@ -148,11 +148,29 @@ const cancelRide = async (req, res) => {
   }
 };
 
+// @desc    Check if driver is sharing location for a ride
+// @route   GET /api/rides/:id/tracking-status
+const getTrackingStatus = async (req, res) => {
+  try {
+    const { getDriverLocation } = require('../config/socket');
+    const location = getDriverLocation(req.params.id);
+    
+    res.status(200).json({
+      success: true,
+      isSharing: !!location,
+      lastUpdate: location?.timestamp || null
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 module.exports = {
   createRide,
   searchRides,
   getRideById,
   getMyRides,
   updateRide,
-  cancelRide
+  cancelRide,
+  getTrackingStatus
 };

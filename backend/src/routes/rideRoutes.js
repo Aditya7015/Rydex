@@ -5,7 +5,8 @@ const {
   getRideById,
   getMyRides,
   updateRide,
-  cancelRide
+  cancelRide,
+  getTrackingStatus
 } = require('../controllers/rideController');
 const { protect } = require('../middleware/auth');
 
@@ -17,5 +18,6 @@ router.post('/', protect, createRide);
 router.get('/:id', getRideById);
 router.put('/:id', protect, updateRide);
 router.delete('/:id', protect, cancelRide);
+router.get('/:id/tracking-status', getTrackingStatus);
 
 module.exports = router;
