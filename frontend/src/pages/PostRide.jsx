@@ -10,21 +10,22 @@ import {
   CurrencyRupeeIcon, 
   UserGroupIcon,
   MusicalNoteIcon,
-  ChatBubbleLeftRightIcon,
-  WifiIcon,
   InformationCircleIcon,
   CheckCircleIcon
 } from '@heroicons/react/24/outline';
 import { FaCarSide, FaSmoking, FaDog, FaMusic, FaComments, FaSnowflake } from 'react-icons/fa';
+import LocationSearch from '../components/LocationSearch';
+import LocationMap from '../components/LocationMap';
 import toast from 'react-hot-toast';
 
 export default function PostRide() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
+  const [mapDistance, setMapDistance] = useState(null);
   const [formData, setFormData] = useState({
-    from: { city: '', landmark: '' },
-    to: { city: '', landmark: '' },
+    from: { city: '', landmark: '', coordinates: null },
+    to: { city: '', landmark: '', coordinates: null },
     date: new Date(),
     departureTime: '09:00',
     seatsAvailable: 2,
@@ -54,6 +55,11 @@ export default function PostRide() {
       return;
     }
     
+    if (!formData.from.coordinates || !formData.to.coordinates) {
+      toast.error('Please select valid locations from suggestions');
+      return;
+    }
+    
     if (formData.seatsAvailable < 1 || formData.seatsAvailable > 8) {
       toast.error('Seats must be between 1 and 8');
       return;
@@ -61,7 +67,28 @@ export default function PostRide() {
     
     setLoading(true);
     try {
-      const { data } = await axios.post('/rides', formData);
+      // Prepare data for API (remove coordinates from the main object if needed)
+      const rideData = {
+        from: {
+          city: formData.from.city,
+          landmark: formData.from.landmark,
+          coordinates: formData.from.coordinates
+        },
+        to: {
+          city: formData.to.city,
+          landmark: formData.to.landmark,
+          coordinates: formData.to.coordinates
+        },
+        date: formData.date,
+        departureTime: formData.departureTime,
+        seatsAvailable: formData.seatsAvailable,
+        pricePerSeat: formData.pricePerSeat,
+        vehicleInfo: formData.vehicleInfo,
+        preferences: formData.preferences,
+        additionalInfo: formData.additionalInfo
+      };
+      
+      const { data } = await axios.post('/rides', rideData);
       toast.success('Ride posted successfully!');
       navigate(`/ride/${data.ride._id}`);
     } catch (error) {
@@ -91,6 +118,17 @@ export default function PostRide() {
     setCurrentStep(currentStep - 1);
   };
 
+  const handleMapLoad = (result) => {
+    if (result?.distance) {
+      setMapDistance(result.distance);
+      // Suggest price based on distance (₹2 per km)
+      const suggestedPrice = Math.max(100, Math.floor(result.distance * 2 / 10) * 10);
+      if (suggestedPrice !== formData.pricePerSeat) {
+        setFormData(prev => ({ ...prev, pricePerSeat: suggestedPrice }));
+      }
+    }
+  };
+
   const steps = [
     { number: 1, title: 'Route', icon: MapPinIcon },
     { number: 2, title: 'Schedule', icon: CalendarIcon },
@@ -98,6 +136,8 @@ export default function PostRide() {
     { number: 4, title: 'Vehicle', icon: FaCarSide },
     { number: 5, title: 'Preferences', icon: MusicalNoteIcon }
   ];
+
+  const canShowMap = formData.from.coordinates && formData.to.coordinates;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 py-8">
@@ -156,65 +196,41 @@ export default function PostRide() {
                   </div>
                   
                   <div className="space-y-4">
-                    <div className="relative">
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        From <span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <MapPinIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                        <input
-                          type="text"
-                          placeholder="Departure city"
-                          value={formData.from.city}
-                          onChange={(e) => setFormData({...formData, from: {...formData.from, city: e.target.value}})}
-                          className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-200 transition-all outline-none"
-                          required
-                        />
-                      </div>
-                    </div>
+                    <LocationSearch
+                      label="From"
+                      placeholder="Departure city or location"
+                      value={formData.from}
+                      onSelect={(location) => setFormData({...formData, from: location || { city: '', landmark: '', coordinates: null }})}
+                      icon={MapPinIcon}
+                      required
+                    />
                     
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        From Landmark (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Specific pickup point"
-                        value={formData.from.landmark}
-                        onChange={(e) => setFormData({...formData, from: {...formData.from, landmark: e.target.value}})}
-                        className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-200 transition-all outline-none"
-                      />
-                    </div>
+                    <LocationSearch
+                      label="To"
+                      placeholder="Destination city or location"
+                      value={formData.to}
+                      onSelect={(location) => setFormData({...formData, to: location || { city: '', landmark: '', coordinates: null }})}
+                      icon={MapPinIcon}
+                      required
+                    />
 
-                    <div className="relative">
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        To <span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <MapPinIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                        <input
-                          type="text"
-                          placeholder="Destination city"
-                          value={formData.to.city}
-                          onChange={(e) => setFormData({...formData, to: {...formData.to, city: e.target.value}})}
-                          className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-200 transition-all outline-none"
-                          required
+                    {/* Map Display */}
+                    {canShowMap && (
+                      <div className="mt-4">
+                        <LocationMap 
+                          fromLocation={formData.from.coordinates}
+                          toLocation={formData.to.coordinates}
+                          onMapLoad={handleMapLoad}
                         />
+                        {mapDistance && (
+                          <div className="mt-2 p-3 bg-primary-50 rounded-xl">
+                            <p className="text-sm text-primary-800 text-center">
+                              📍 Distance: {mapDistance} km • 💰 Suggested price: ₹{Math.max(100, Math.floor(mapDistance * 2 / 10) * 10)} - ₹{Math.max(150, Math.floor(mapDistance * 3 / 10) * 10)}
+                            </p>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        To Landmark (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Specific drop-off point"
-                        value={formData.to.landmark}
-                        onChange={(e) => setFormData({...formData, to: {...formData.to, landmark: e.target.value}})}
-                        className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-200 transition-all outline-none"
-                      />
-                    </div>
+                    )}
                   </div>
                 </div>
               )}

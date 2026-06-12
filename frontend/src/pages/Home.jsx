@@ -13,20 +13,30 @@ import { MdLocationOn, MdSwapVert, MdVerified, MdEmojiTransportation, MdSecurity
 import { TbArrowsExchange } from 'react-icons/tb';
 import { BiTimeFive, BiSupport, BiMoney, BiHappy, BiTrendingUp, BiAward } from 'react-icons/bi';
 import { SiGooglemaps } from 'react-icons/si';
+import { ImSpinner8 } from 'react-icons/im';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import { motion, useAnimation, useInView } from 'framer-motion';
 import Footer from '../components/Footer';
+
+// MapTiler API Key
+const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY;
 
 export default function Home() {
   const navigate = useNavigate();
   const [search, setSearch] = useState({
     from: '',
     to: '',
+    fromCoords: null,
+    toCoords: null,
     date: new Date()
   });
   const [isFromFocused, setIsFromFocused] = useState(false);
   const [isToFocused, setIsToFocused] = useState(false);
+  const [fromSuggestions, setFromSuggestions] = useState([]);
+  const [toSuggestions, setToSuggestions] = useState([]);
+  const [loadingFrom, setLoadingFrom] = useState(false);
+  const [loadingTo, setLoadingTo] = useState(false);
   const [statsCount, setStatsCount] = useState({
     riders: 0,
     rides: 0,
@@ -37,6 +47,8 @@ export default function Home() {
 
   const statsRef = useRef(null);
   const isStatsInView = useInView(statsRef, { once: true, threshold: 0.3 });
+  const fromDebounceTimer = useRef(null);
+  const toDebounceTimer = useRef(null);
 
   const popularRoutes = [
     { from: "Delhi", to: "Jaipur", price: "₹400", time: "5h", rides: 24, distance: "280 km", savings: "60%" },
@@ -132,13 +144,95 @@ export default function Home() {
   ];
 
   const cities = [
-    { name: "Delhi", rides: 1234, growth: "+45%" },
-    { name: "Mumbai", rides: 982, growth: "+38%" },
-    { name: "Bangalore", rides: 876, growth: "+52%" },
-    { name: "Chennai", rides: 654, growth: "+31%" },
-    { name: "Kolkata", rides: 543, growth: "+28%" },
-    { name: "Hyderabad", rides: 432, growth: "+41%" },
+    { name: "Delhi", rides: 1234, growth: "+45%", lat: 28.6139, lng: 77.2090 },
+    { name: "Mumbai", rides: 982, growth: "+38%", lat: 19.0760, lng: 72.8777 },
+    { name: "Bangalore", rides: 876, growth: "+52%", lat: 12.9716, lng: 77.5946 },
+    { name: "Chennai", rides: 654, growth: "+31%", lat: 13.0827, lng: 80.2707 },
+    { name: "Kolkata", rides: 543, growth: "+28%", lat: 22.5726, lng: 88.3639 },
+    { name: "Hyderabad", rides: 432, growth: "+41%", lat: 17.3850, lng: 78.4867 },
   ];
+
+  // Search locations using MapTiler Geocoding API
+  const searchLocations = async (query, type) => {
+    if (!query || query.length < 2) {
+      if (type === 'from') setFromSuggestions([]);
+      else setToSuggestions([]);
+      return;
+    }
+
+    if (type === 'from') setLoadingFrom(true);
+    else setLoadingTo(true);
+
+    try {
+      const response = await fetch(
+        `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?key=${MAPTILER_API_KEY}&limit=5&language=en&country=IN`
+      );
+      const data = await response.json();
+      
+      if (data.features && data.features.length > 0) {
+        const results = data.features.map(feature => ({
+          name: feature.place_name,
+          city: feature.text,
+          lat: feature.geometry.coordinates[1],
+          lng: feature.geometry.coordinates[0],
+          fullAddress: feature.place_name
+        }));
+        
+        if (type === 'from') setFromSuggestions(results);
+        else setToSuggestions(results);
+      } else {
+        if (type === 'from') setFromSuggestions([]);
+        else setToSuggestions([]);
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+      if (type === 'from') setFromSuggestions([]);
+      else setToSuggestions([]);
+    } finally {
+      if (type === 'from') setLoadingFrom(false);
+      else setLoadingTo(false);
+    }
+  };
+
+  const handleFromChange = (e) => {
+    const value = e.target.value;
+    setSearch(prev => ({ ...prev, from: value, fromCoords: null }));
+    
+    if (fromDebounceTimer.current) clearTimeout(fromDebounceTimer.current);
+    fromDebounceTimer.current = setTimeout(() => {
+      searchLocations(value, 'from');
+    }, 300);
+  };
+
+  const handleToChange = (e) => {
+    const value = e.target.value;
+    setSearch(prev => ({ ...prev, to: value, toCoords: null }));
+    
+    if (toDebounceTimer.current) clearTimeout(toDebounceTimer.current);
+    toDebounceTimer.current = setTimeout(() => {
+      searchLocations(value, 'to');
+    }, 300);
+  };
+
+  const selectFromSuggestion = (suggestion) => {
+    setSearch(prev => ({
+      ...prev,
+      from: suggestion.name,
+      fromCoords: { lat: suggestion.lat, lng: suggestion.lng }
+    }));
+    setFromSuggestions([]);
+    setIsFromFocused(false);
+  };
+
+  const selectToSuggestion = (suggestion) => {
+    setSearch(prev => ({
+      ...prev,
+      to: suggestion.name,
+      toCoords: { lat: suggestion.lat, lng: suggestion.lng }
+    }));
+    setToSuggestions([]);
+    setIsToFocused(false);
+  };
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -212,15 +306,22 @@ export default function Home() {
 
   const handleSearch = (e) => {
     e.preventDefault();
-    if (!search.from || !search.to) return;
-    navigate(`/search?from=${search.from}&to=${search.to}&date=${search.date.toISOString().split('T')[0]}`);
+    if (!search.from || !search.to) {
+      if (search.from && search.to) {
+        navigate(`/search?from=${encodeURIComponent(search.from)}&to=${encodeURIComponent(search.to)}&date=${search.date.toISOString().split('T')[0]}`);
+      }
+      return;
+    }
+    navigate(`/search?from=${encodeURIComponent(search.from)}&to=${encodeURIComponent(search.to)}&date=${search.date.toISOString().split('T')[0]}`);
   };
 
   const swapLocations = () => {
     setSearch({
       ...search,
       from: search.to,
-      to: search.from
+      to: search.from,
+      fromCoords: search.toCoords,
+      toCoords: search.fromCoords
     });
   };
 
@@ -234,14 +335,47 @@ export default function Home() {
     </button>
   );
 
+  // Location Suggestion Dropdown Component
+  const LocationSuggestions = ({ suggestions, loading, onSelect }) => {
+    if (!suggestions.length && !loading) return null;
+    
+    return (
+      <div className="absolute z-20 w-full mt-1 bg-white rounded-xl shadow-lg border border-gray-200 max-h-60 overflow-y-auto animate-fadeIn">
+        {loading ? (
+          <div className="p-4 text-center text-gray-500">
+            <ImSpinner8 className="animate-spin w-5 h-5 mx-auto mb-2" />
+            <p className="text-sm">Searching locations...</p>
+          </div>
+        ) : (
+          suggestions.map((suggestion, index) => (
+            <button
+              key={index}
+              onClick={() => onSelect(suggestion)}
+              className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0 flex items-start gap-3 group"
+            >
+              <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center group-hover:bg-primary-200 transition-colors">
+                <HiLocationMarker className="w-4 h-4 text-primary-600" />
+              </div>
+              <div className="flex-1">
+                <div className="font-medium text-gray-900">{suggestion.city}</div>
+                <div className="text-sm text-gray-500 truncate">{suggestion.fullAddress}</div>
+              </div>
+              <div className="text-primary-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                <FaArrowRight className="w-4 h-4" />
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="overflow-hidden">
-      {/* Hero Section with Video Background */}
+      {/* Hero Section */}
       <div className="relative min-h-screen overflow-hidden">
-        {/* Animated Gradient Background */}
         <div className="absolute inset-0 bg-gradient-to-br from-primary-900 via-primary-800 to-primary-900 animate-gradient"></div>
         
-        {/* Animated Cars */}
         <div className="absolute inset-0 opacity-10">
           <div className="absolute top-20 left-10 animate-float">
             <FaCar className="text-6xl text-white" />
@@ -253,7 +387,7 @@ export default function Home() {
 
         <div className="relative container mx-auto px-4 pt-20 pb-32">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
-            {/* Left Content with Animations */}
+            {/* Left Content */}
             <motion.div
               initial={{ opacity: 0, x: -50 }}
               animate={{ opacity: 1, x: 0 }}
@@ -304,7 +438,6 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Trust Indicators */}
               <div className="flex gap-6 mt-8 pt-6 border-t border-white/20">
                 <div className="flex items-center gap-2">
                   <BiAward className="text-yellow-400 text-2xl" />
@@ -330,7 +463,7 @@ export default function Home() {
               </div>
             </motion.div>
             
-            {/* Right Content - Search Card with Animation */}
+            {/* Right Content - Search Card */}
             <motion.div
               initial={{ opacity: 0, x: 50 }}
               animate={{ opacity: 1, x: 0 }}
@@ -358,7 +491,7 @@ export default function Home() {
                         type="text"
                         placeholder="Current city or location"
                         value={search.from}
-                        onChange={(e) => setSearch({...search, from: e.target.value})}
+                        onChange={handleFromChange}
                         onFocus={() => setIsFromFocused(true)}
                         onBlur={() => setTimeout(() => setIsFromFocused(false), 200)}
                         className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-200 transition-all outline-none"
@@ -366,20 +499,11 @@ export default function Home() {
                       />
                     </div>
                     {isFromFocused && (
-                      <div className="absolute z-20 w-full mt-2 bg-white rounded-xl shadow-lg border p-2 animate-fadeIn">
-                        <div className="p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-all">
-                          <div className="flex items-center gap-2">
-                            <MdLocationOn className="text-gray-400" />
-                            <span>Current Location</span>
-                          </div>
-                        </div>
-                        <div className="p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-all">
-                          <div className="flex items-center gap-2">
-                            <BiTimeFive className="text-gray-400" />
-                            <span>Recent: Delhi</span>
-                          </div>
-                        </div>
-                      </div>
+                      <LocationSuggestions
+                        suggestions={fromSuggestions}
+                        loading={loadingFrom}
+                        onSelect={selectFromSuggestion}
+                      />
                     )}
                   </div>
                   
@@ -397,11 +521,20 @@ export default function Home() {
                         type="text"
                         placeholder="Destination city"
                         value={search.to}
-                        onChange={(e) => setSearch({...search, to: e.target.value})}
+                        onChange={handleToChange}
+                        onFocus={() => setIsToFocused(true)}
+                        onBlur={() => setTimeout(() => setIsToFocused(false), 200)}
                         className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-200 transition-all outline-none"
                         required
                       />
                     </div>
+                    {isToFocused && (
+                      <LocationSuggestions
+                        suggestions={toSuggestions}
+                        loading={loadingTo}
+                        onSelect={selectToSuggestion}
+                      />
+                    )}
                   </div>
                   
                   <div className="relative">
@@ -454,7 +587,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Stats Section with Animation */}
+      {/* Stats Section */}
       <div ref={statsRef} className="bg-gradient-to-r from-primary-50 via-white to-primary-50 py-16">
         <div className="container mx-auto px-4">
           <motion.div
@@ -502,7 +635,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Features Grid with Animation */}
+      {/* Features Grid */}
       <div className="container mx-auto px-4 py-20">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
@@ -546,7 +679,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Popular Routes Section with Enhanced Design */}
+      {/* Popular Routes Section */}
       <div className="bg-gray-50 py-20">
         <div className="container mx-auto px-4">
           <motion.div
@@ -573,7 +706,7 @@ export default function Home() {
                 whileHover={{ scale: 1.05 }}
                 className="bg-white rounded-2xl shadow-md hover:shadow-xl transition-all p-6 cursor-pointer group"
                 onClick={() => {
-                  setSearch({ from: route.from, to: route.to, date: new Date() });
+                  setSearch({ from: route.from, to: route.to, fromCoords: null, toCoords: null, date: new Date() });
                   navigate(`/search?from=${route.from}&to=${route.to}&date=${new Date().toISOString().split('T')[0]}`);
                 }}
               >
@@ -617,7 +750,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* How It Works with Animated Steps */}
+      {/* How It Works */}
       <div className="container mx-auto px-4 py-20">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
@@ -685,7 +818,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Testimonials Section with Carousel */}
+      {/* Testimonials Section */}
       <div className="bg-gradient-to-r from-primary-600 to-primary-800 py-20 text-white relative overflow-hidden">
         <div className="absolute inset-0 opacity-10">
           <div className="absolute top-10 left-10 animate-float">
@@ -757,7 +890,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Top Cities Section with Growth Indicators */}
+      {/* Top Cities Section */}
       <div className="container mx-auto px-4 py-20">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
@@ -800,14 +933,9 @@ export default function Home() {
         </div>
       </div>
 
-      {/* CTA Section with Enhanced Design */}
+      {/* CTA Section */}
       <div className="bg-gradient-to-r from-primary-500 via-primary-600 to-primary-700 py-24 relative overflow-hidden">
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage: "url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 2000 2000%22%3E%3Cpath fill=%22%23ffffff%22 fill-opacity=%220.05%22 d=%22...%22/%3E%3C/svg%3E')",
-          }}
-        ></div>
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 2000 2000%22%3E%3Cpath fill=%22%23ffffff%22 fill-opacity=%220.05%22 d=%22...%22/%3E%3C/svg%3E')]"></div>
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-yellow-400 rounded-full blur-3xl opacity-20 animate-pulse"></div>
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-400 rounded-full blur-3xl opacity-20 animate-pulse delay-1000"></div>
         
@@ -883,6 +1011,11 @@ const styles = `
     100% { transform: translateY(10px); opacity: 0; }
   }
   
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
   .animate-gradient {
     background-size: 200% 200%;
     animation: gradient 15s ease infinite;
@@ -907,6 +1040,10 @@ const styles = `
   
   .animate-pulse-slow {
     animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  
+  .animate-fadeIn {
+    animation: fadeIn 0.2s ease-out;
   }
 `;
 

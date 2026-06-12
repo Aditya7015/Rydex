@@ -11,6 +11,7 @@
   "dependencies": {
     "@headlessui/react": "^2.2.10",
     "@heroicons/react": "^2.2.0",
+    "@maptiler/sdk": "^4.0.2",
     "axios": "^1.17.0",
     "date-fns": "^4.4.0",
     "firebase": "^12.14.0",
