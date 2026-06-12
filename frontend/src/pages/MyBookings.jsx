@@ -19,7 +19,8 @@ import {
   ChevronRightIcon
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
-import { FaRegClock, FaCarSide, FaGasPump, FaCar } from 'react-icons/fa';
+import { FaRegClock, FaCarSide, FaGasPump, FaCar, FaLocationArrow } from 'react-icons/fa';
+import PassengerLiveTracking from '../components/PassengerLiveTracking';
 import toast from 'react-hot-toast';
 
 export default function MyBookings() {
@@ -29,6 +30,8 @@ export default function MyBookings() {
   const [ratingModal, setRatingModal] = useState(null);
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [activeTrackingBooking, setActiveTrackingBooking] = useState(null);
+  const [driverSharingStatus, setDriverSharingStatus] = useState({});
 
   useEffect(() => {
     fetchBookings();
@@ -39,10 +42,29 @@ export default function MyBookings() {
       setLoading(true);
       const { data } = await axios.get('/bookings/my-bookings');
       setBookings(data.bookings);
+      
+      // Check tracking status for each confirmed upcoming booking
+      for (const booking of data.bookings) {
+        if (booking.status === 'confirmed' && getBookingRideDateTime(booking) > new Date()) {
+          checkTrackingStatus(booking);
+        }
+      }
     } catch (error) {
       toast.error('Failed to load bookings');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkTrackingStatus = async (booking) => {
+    try {
+      const { data } = await axios.get(`/rides/${booking.rideId?._id}/tracking-status`);
+      setDriverSharingStatus(prev => ({
+        ...prev,
+        [booking.rideId?._id]: data.isSharing
+      }));
+    } catch (error) {
+      console.error('Error checking tracking status');
     }
   };
 
@@ -73,8 +95,9 @@ export default function MyBookings() {
     }
   };
 
-  const getStatusColor = (status, rideDate) => {
-    const isPast = new Date(rideDate) < new Date();
+  const getStatusColor = (status, booking) => {
+    const rideDateTime = getBookingRideDateTime(booking);
+    const isPast = rideDateTime ? rideDateTime < new Date() : false;
     if (status === 'confirmed' && !isPast) return 'bg-green-500';
     if (status === 'confirmed' && isPast) return 'bg-gray-400';
     if (status === 'pending') return 'bg-yellow-500';
@@ -82,8 +105,21 @@ export default function MyBookings() {
     return 'bg-gray-500';
   };
 
-  const getStatusText = (status, rideDate) => {
-    const isPast = new Date(rideDate) < new Date();
+  const getBookingRideDateTime = (booking) => {
+    if (!booking?.rideId?.date) return null;
+    const rideDateTime = new Date(booking.rideId.date);
+    if (booking.rideId.departureTime) {
+      const [hours, minutes] = booking.rideId.departureTime.split(':').map(Number);
+      if (!Number.isNaN(hours) && !Number.isNaN(minutes)) {
+        rideDateTime.setHours(hours, minutes, 0, 0);
+      }
+    }
+    return rideDateTime;
+  };
+
+  const getStatusText = (status, booking) => {
+    const rideDateTime = getBookingRideDateTime(booking);
+    const isPast = rideDateTime ? rideDateTime < new Date() : false;
     if (status === 'confirmed' && !isPast) return 'Upcoming';
     if (status === 'confirmed' && isPast) return 'Completed';
     if (status === 'pending') return 'Pending Approval';
@@ -91,10 +127,11 @@ export default function MyBookings() {
     return status;
   };
 
-  const filteredBookings = bookings.filter(booking => {
-    const rideDate = new Date(booking.rideId?.date);
-    if (activeTab === 'upcoming') return rideDate >= new Date() && booking.status === 'confirmed';
-    if (activeTab === 'past') return rideDate < new Date() || booking.status === 'completed';
+  const filteredBookings = bookings.filter((booking) => {
+    const rideDateTime = getBookingRideDateTime(booking);
+    if (!rideDateTime) return false;
+    if (activeTab === 'upcoming') return rideDateTime >= new Date() && booking.status === 'confirmed';
+    if (activeTab === 'past') return rideDateTime < new Date() || booking.status === 'completed';
     if (activeTab === 'cancelled') return booking.status === 'cancelled';
     if (activeTab === 'pending') return booking.status === 'pending';
     return true;
@@ -133,13 +170,19 @@ export default function MyBookings() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <div className="bg-white rounded-xl shadow-sm p-4 border-l-4 border-green-500">
             <div className="text-2xl font-bold text-gray-900">
-              {bookings.filter(b => new Date(b.rideId?.date) >= new Date() && b.status === 'confirmed').length}
+              {bookings.filter(b => {
+                const rideDateTime = getBookingRideDateTime(b);
+                return rideDateTime && rideDateTime >= new Date() && b.status === 'confirmed';
+              }).length}
             </div>
             <div className="text-sm text-gray-600">Upcoming Rides</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-4 border-l-4 border-blue-500">
             <div className="text-2xl font-bold text-gray-900">
-              {bookings.filter(b => new Date(b.rideId?.date) < new Date() && b.status === 'confirmed').length}
+              {bookings.filter(b => {
+                const rideDateTime = getBookingRideDateTime(b);
+                return rideDateTime && rideDateTime < new Date() && b.status === 'confirmed';
+              }).length}
             </div>
             <div className="text-sm text-gray-600">Completed Rides</div>
           </div>
@@ -175,8 +218,10 @@ export default function MyBookings() {
                   activeTab === tab ? 'bg-white/20' : 'bg-gray-200 text-gray-600'
                 }`}>
                   {bookings.filter(b => {
-                    if (tab === 'upcoming') return new Date(b.rideId?.date) >= new Date() && b.status === 'confirmed';
-                    if (tab === 'past') return new Date(b.rideId?.date) < new Date() || b.status === 'completed';
+                    const rideDateTime = getBookingRideDateTime(b);
+                    if (!rideDateTime) return false;
+                    if (tab === 'upcoming') return rideDateTime >= new Date() && b.status === 'confirmed';
+                    if (tab === 'past') return rideDateTime < new Date() || b.status === 'completed';
                     if (tab === 'cancelled') return b.status === 'cancelled';
                     if (tab === 'pending') return b.status === 'pending';
                     return false;
@@ -199,179 +244,209 @@ export default function MyBookings() {
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredBookings.map((booking) => (
-              <div
-                key={booking._id}
-                className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden group"
-              >
-                {/* Status Bar */}
-                <div className={`h-1 ${getStatusColor(booking.status, booking.rideId?.date)}`}></div>
-                
-                <div className="p-6">
-                  {/* Header */}
-                  <div className="flex flex-wrap justify-between items-start mb-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`px-3 py-1 rounded-full text-xs font-semibold text-white ${
-                        getStatusColor(booking.status, booking.rideId?.date)
-                      }`}>
-                        {getStatusText(booking.status, booking.rideId?.date)}
-                      </div>
-                      <div className="flex items-center gap-1 text-sm text-gray-500">
-                        <CalendarIcon className="w-4 h-4" />
-                        <span>{format(new Date(booking.rideId?.date), 'dd MMM yyyy')}</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-sm text-gray-500">
-                        <ClockIcon className="w-4 h-4" />
-                        <span>{booking.rideId?.departureTime}</span>
-                      </div>
-                    </div>
-                    <div className="text-2xl font-bold text-primary-600">
-                      ₹{booking.totalPrice}
-                    </div>
-                  </div>
-
-                  {/* Route */}
-                  <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl p-4 mb-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex-shrink-0">
-                        <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                          <MapPinIcon className="w-4 h-4 text-green-600" />
+            {filteredBookings.map((booking) => {
+              const rideDateTime = getBookingRideDateTime(booking);
+              const isUpcoming = rideDateTime && rideDateTime > new Date();
+              const isDriverSharing = driverSharingStatus[booking.rideId?._id];
+              const isTrackingActive = activeTrackingBooking === booking._id;
+              
+              return (
+                <div
+                  key={booking._id}
+                  className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden group"
+                >
+                  {/* Status Bar */}
+                  <div className={`h-1 ${getStatusColor(booking.status, booking)}`}></div>
+                  
+                  <div className="p-6">
+                    {/* Header */}
+                    <div className="flex flex-wrap justify-between items-start mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className={`px-3 py-1 rounded-full text-xs font-semibold text-white ${
+                          getStatusColor(booking.status, booking)
+                        }`}>
+                          {getStatusText(booking.status, booking)}
+                        </div>
+                        <div className="flex items-center gap-1 text-sm text-gray-500">
+                          <CalendarIcon className="w-4 h-4" />
+                          <span>{format(new Date(booking.rideId?.date), 'dd MMM yyyy')}</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-sm text-gray-500">
+                          <ClockIcon className="w-4 h-4" />
+                          <span>{booking.rideId?.departureTime}</span>
                         </div>
                       </div>
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900">{booking.rideId?.from?.city}</div>
-                        {booking.rideId?.from?.landmark && (
-                          <div className="text-sm text-gray-500">{booking.rideId?.from?.landmark}</div>
-                        )}
-                      </div>
-                      <div className="text-gray-400">→</div>
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900">{booking.rideId?.to?.city}</div>
-                        {booking.rideId?.to?.landmark && (
-                          <div className="text-sm text-gray-500">{booking.rideId?.to?.landmark}</div>
-                        )}
+                      <div className="text-2xl font-bold text-primary-600">
+                        ₹{booking.totalPrice}
                       </div>
                     </div>
-                  </div>
 
-                  {/* Driver & Vehicle Info */}
-                  <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={booking.driverId?.profilePhoto || '/default-avatar.png'}
-                        alt={booking.driverId?.name}
-                        className="w-12 h-12 rounded-full object-cover border-2 border-primary-100"
-                      />
-                      <div>
-                        <div className="font-semibold text-gray-900">{booking.driverId?.name}</div>
-                        <div className="flex items-center gap-2 text-sm text-gray-500">
-                          <div className="flex items-center gap-1">
-                            <StarIcon className="w-3 h-3 text-yellow-400" />
-                            <span>{booking.driverId?.rating?.toFixed(1) || 'New'}</span>
+                    {/* Route */}
+                    <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl p-4 mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-shrink-0">
+                          <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                            <MapPinIcon className="w-4 h-4 text-green-600" />
                           </div>
-                          <span>•</span>
-                          <span>{booking.driverId?.totalRidesAsDriver || 0} trips</span>
+                        </div>
+                        <div className="flex-1">
+                          <div className="font-semibold text-gray-900">{booking.rideId?.from?.city}</div>
+                          {booking.rideId?.from?.landmark && (
+                            <div className="text-sm text-gray-500">{booking.rideId?.from?.landmark}</div>
+                          )}
+                        </div>
+                        <div className="text-gray-400">→</div>
+                        <div className="flex-1">
+                          <div className="font-semibold text-gray-900">{booking.rideId?.to?.city}</div>
+                          {booking.rideId?.to?.landmark && (
+                            <div className="text-sm text-gray-500">{booking.rideId?.to?.landmark}</div>
+                          )}
                         </div>
                       </div>
                     </div>
-                    
-                    <div className="flex items-center gap-3">
-                      {booking.rideId?.vehicleInfo?.make && (
+
+                    {/* Driver & Vehicle Info */}
+                    <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={booking.driverId?.profilePhoto || '/default-avatar.png'}
+                          alt={booking.driverId?.name}
+                          className="w-12 h-12 rounded-full object-cover border-2 border-primary-100"
+                        />
+                        <div>
+                          <div className="font-semibold text-gray-900">{booking.driverId?.name}</div>
+                          <div className="flex items-center gap-2 text-sm text-gray-500">
+                            <div className="flex items-center gap-1">
+                              <StarIcon className="w-3 h-3 text-yellow-400" />
+                              <span>{booking.driverId?.rating?.toFixed(1) || 'New'}</span>
+                            </div>
+                            <span>•</span>
+                            <span>{booking.driverId?.totalRidesAsDriver || 0} trips</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                        {booking.rideId?.vehicleInfo?.make && (
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <FaCar className="w-4 h-4" />
+                            <span>{booking.rideId?.vehicleInfo?.make} {booking.rideId?.vehicleInfo?.model}</span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <FaCar className="w-4 h-4" />
-                          <span>{booking.rideId?.vehicleInfo?.make} {booking.rideId?.vehicleInfo?.model}</span>
+                          <UserCircleIcon className="w-4 h-4" />
+                          <span>{booking.seats} seat(s)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Ride Preferences Tags */}
+                    {booking.rideId?.preferences && (
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {booking.rideId?.preferences?.acAvailable && (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-lg">
+                            <WifiIcon className="w-3 h-3" /> AC
+                          </span>
+                        )}
+                        {booking.rideId?.preferences?.music && booking.rideId?.preferences?.music !== 'any' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 text-xs rounded-lg">
+                            <MusicalNoteIcon className="w-3 h-3" /> {booking.rideId?.preferences?.music}
+                          </span>
+                        )}
+                        {booking.rideId?.preferences?.chatting && booking.rideId?.preferences?.chatting !== 'any' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-50 text-green-700 text-xs rounded-lg">
+                            <FaceSmileIcon className="w-3 h-3" /> {booking.rideId?.preferences?.chatting}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* LIVE TRACKING SECTION - For Passengers */}
+                    {booking.status === 'confirmed' && isUpcoming && (
+                      <div className="mb-4">
+                        {isTrackingActive ? (
+                          <PassengerLiveTracking 
+                            rideId={booking.rideId?._id}
+                            driverName={booking.driverId?.name}
+                            onTrackingEnd={() => setActiveTrackingBooking(null)}
+                          />
+                        ) : (
+                          isDriverSharing && (
+                            <button
+                              onClick={() => setActiveTrackingBooking(booking._id)}
+                              className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+                            >
+                              <FaLocationArrow className="w-5 h-5 animate-pulse" />
+                              View Driver Live Location
+                            </button>
+                          )
+                        )}
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
+                    <div className="flex flex-wrap gap-3 pt-4 border-t">
+                      {booking.status === 'confirmed' && isUpcoming && (
+                        <>
+                          <Link
+                            to={`/chat/${booking.rideId?._id}/${booking.driverId?._id}`}
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 transition-all"
+                          >
+                            <ChatBubbleLeftRightIcon className="w-4 h-4" />
+                            Message Driver
+                          </Link>
+                          <button
+                            onClick={() => handleCancelBooking(booking._id)}
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
+                          >
+                            <XMarkIcon className="w-4 h-4" />
+                            Cancel Booking
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedBooking(booking);
+                              setShowDetailsModal(true);
+                            }}
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-all"
+                          >
+                            View Details
+                          </button>
+                        </>
+                      )}
+                      
+                      {booking.status === 'confirmed' && !isUpcoming && !booking.driverRating && (
+                        <button
+                          onClick={() => setRatingModal(booking)}
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 transition-all"
+                        >
+                          <StarIcon className="w-4 h-4" />
+                          Rate this ride
+                        </button>
+                      )}
+                      
+                      {booking.driverRating && (
+                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg">
+                          <StarSolidIcon className="w-4 h-4" />
+                          Rated {booking.driverRating}.0
                         </div>
                       )}
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <UserCircleIcon className="w-4 h-4" />
-                        <span>{booking.seats} seat(s)</span>
-                      </div>
-                    </div>
-                  </div>
 
-                  {/* Ride Preferences Tags */}
-                  {booking.rideId?.preferences && (
-                    <div className="flex flex-wrap gap-2 mb-4">
-                      {booking.rideId?.preferences?.acAvailable && (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-lg">
-                          <WifiIcon className="w-3 h-3" /> AC
-                        </span>
-                      )}
-                      {booking.rideId?.preferences?.music && booking.rideId?.preferences?.music !== 'any' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 text-xs rounded-lg">
-                          <MusicalNoteIcon className="w-3 h-3" /> {booking.rideId?.preferences?.music}
-                        </span>
-                      )}
-                      {booking.rideId?.preferences?.chatting && booking.rideId?.preferences?.chatting !== 'any' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-50 text-green-700 text-xs rounded-lg">
-                          <FaceSmileIcon className="w-3 h-3" /> {booking.rideId?.preferences?.chatting}
-                        </span>
+                      {booking.status === 'pending' && (
+                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-50 text-yellow-700 rounded-lg">
+                          <ClockIcon className="w-4 h-4" />
+                          Awaiting driver confirmation
+                        </div>
                       )}
                     </div>
-                  )}
-
-                  {/* Action Buttons */}
-                  <div className="flex flex-wrap gap-3 pt-4 border-t">
-                    {booking.status === 'confirmed' && new Date(booking.rideId?.date) > new Date() && (
-                      <>
-                        <Link
-                          to={`/chat/${booking.rideId?._id}/${booking.driverId?._id}`}
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 transition-all"
-                        >
-                          <ChatBubbleLeftRightIcon className="w-4 h-4" />
-                          Message Driver
-                        </Link>
-                        <button
-                          onClick={() => handleCancelBooking(booking._id)}
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all"
-                        >
-                          <XMarkIcon className="w-4 h-4" />
-                          Cancel Booking
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedBooking(booking);
-                            setShowDetailsModal(true);
-                          }}
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-all"
-                        >
-                          View Details
-                        </button>
-                      </>
-                    )}
-                    
-                    {booking.status === 'confirmed' && new Date(booking.rideId?.date) < new Date() && !booking.driverRating && (
-                      <button
-                        onClick={() => setRatingModal(booking)}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 transition-all"
-                      >
-                        <StarIcon className="w-4 h-4" />
-                        Rate this ride
-                      </button>
-                    )}
-                    
-                    {booking.driverRating && (
-                      <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg">
-                        <StarSolidIcon className="w-4 h-4" />
-                        Rated {booking.driverRating}.0
-                      </div>
-                    )}
-
-                    {booking.status === 'pending' && (
-                      <div className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-50 text-yellow-700 rounded-lg">
-                        <ClockIcon className="w-4 h-4" />
-                        Awaiting driver confirmation
-                      </div>
-                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Rating Modal - Premium Design */}
+      {/* Rating Modal */}
       {ratingModal && (
         <RatingModal
           booking={ratingModal}
